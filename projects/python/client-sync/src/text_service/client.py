@@ -4,6 +4,8 @@ from typing import Any
 
 import httpx
 
+END_MARKER = ":end"
+
 
 def exchange(
     client: httpx.Client, method: str, path: str, token: str = "", body: object = None
@@ -15,6 +17,45 @@ def exchange(
     except ValueError:
         result = {"message": response.text}
     return response.status_code, result
+
+
+def read_text() -> str:
+    """Read multiline text, preserving empty input and a trailing newline."""
+    print(f"Enter text. Finish with {END_MARKER}; use \\{END_MARKER} for a literal marker.")
+    lines: list[str] = []
+    while True:
+        line = input()
+        if line == END_MARKER:
+            return "\n".join(lines)
+        if line == f"\\{END_MARKER}":
+            line = END_MARKER
+        lines.append(line)
+
+
+def command_request(command: str) -> tuple[str, str, object]:
+    """Collect command input and return the corresponding HTTP request."""
+    if command in ("register", "login"):
+        body = {
+            "username": input("username: "),
+            "password": getpass.getpass("password: "),
+        }
+        return "POST", "/users" if command == "register" else "/sessions", body
+    if command in ("ping", "logout", "list", "delete-user"):
+        method, path = {
+            "ping": ("GET", "/ping"),
+            "logout": ("DELETE", "/sessions/current"),
+            "list": ("GET", "/texts"),
+            "delete-user": ("DELETE", "/users/me"),
+        }[command]
+        return method, path, None
+    if command == "echo":
+        return "POST", "/echo", {"text": read_text()}
+    if command in ("put", "get", "delete"):
+        name = input("name: ")
+        method = {"put": "PUT", "get": "GET", "delete": "DELETE"}[command]
+        body = {"text": read_text()} if command == "put" else None
+        return method, f"/texts/{name}", body
+    raise ValueError("Unknown command")
 
 
 def main() -> None:
@@ -31,25 +72,11 @@ def main() -> None:
                     "ping / register / login / logout / list / echo / "
                     "delete-user / put / get / delete / q > "
                 ).strip()
-                body = None
                 if command == "q":
                     break
-                if command in ("register", "login"):
-                    body = {
-                        "username": input("username: "),
-                        "password": getpass.getpass("password: "),
-                    }
-                    method, path = "POST", "/users" if command == "register" else "/sessions"
-                elif command in ("ping", "logout", "list"):
-                    method, path = {
-                        "ping": ("GET", "/ping"),
-                        "logout": ("DELETE", "/sessions/current"),
-                        "list": ("GET", "/texts"),
-                    }[command]
-                elif command in ("echo", "delete-user", "put", "get", "delete"):
-                    print("This task is not implemented in the starting code yet.")
-                    continue
-                else:
+                try:
+                    method, path, body = command_request(command)
+                except ValueError:
                     print("Unknown command.")
                     continue
                 try:
@@ -59,7 +86,7 @@ def main() -> None:
                         token = result["data"]["token"]
                     if status == 401:
                         print("Please log in again.")
-                    if status == 401 or (command == "logout" and status == 200):
+                    if status == 401 or (command in ("logout", "delete-user") and status == 200):
                         token = ""
                 except (httpx.HTTPError, ValueError, KeyError) as exc:
                     print(f"Request failed: {exc}")
