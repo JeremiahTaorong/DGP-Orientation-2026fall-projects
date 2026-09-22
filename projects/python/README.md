@@ -4,6 +4,9 @@
 
 语言学习和资料查询方法见 [Python 学习指引](learning.md)。
 
+本仓库中的完成情况、架构说明、并发设计和验证记录见
+[实现与讲解说明](IMPLEMENTATION.md)。
+
 ## 开发环境
 
 - 使用 Python 3.13 与 uv。

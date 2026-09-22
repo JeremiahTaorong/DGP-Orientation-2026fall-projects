@@ -17,3 +17,11 @@
 主要从 `service.py` 的 `ROUTES`、`route_error()` 和 `Service.handle()` 开始扩展接口。增加令牌期限时，在 `server.py` 解析配置并构造带配置的 `Service`，再传入 `create_app(service)`；业务配置与有效期逻辑由候选人实现。
 
 `tests/test_http.py` 使用同步 `TestClient`，上下文管理器负责应用启动与关闭。完成本层任务无需编写 `async/await`，通常也不需要修改 `_http.py`。同步业务在线程池中执行，仍须保护共享状态。HTTP 验证见[同步服务端](../../../common/tasks.md#同步服务端)。
+
+令牌默认有效 300 秒，可通过启动参数调整：
+
+```bash
+uv run rm-server --host 127.0.0.1 --port 7878 --token-ttl-seconds 60
+```
+
+该参数必须是正整数。同步请求处理在线程池中执行，业务状态由 `Service` 内的锁保护。
