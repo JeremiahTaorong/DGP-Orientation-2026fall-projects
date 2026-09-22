@@ -25,9 +25,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     yield
 
 
-def create_app() -> FastAPI:
+def create_app(service: Service | None = None) -> FastAPI:
     app = FastAPI(openapi_url=None, docs_url=None, redoc_url=None, lifespan=lifespan)
-    service = Service()
+    service = Service() if service is None else service
 
     @app.middleware("http")
     async def log_request(request: Request, call_next: RequestResponseEndpoint) -> Response:
@@ -87,7 +87,16 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=7878)
+    parser.add_argument("--token-ttl-seconds", type=int, default=300)
     args = parser.parse_args()
     if not 1 <= args.port <= 65535:
         parser.error("port must be 1..65535")
-    uvicorn.run(create_app(), host=args.host, port=args.port, workers=1, access_log=False)
+    if args.token_ttl_seconds <= 0:
+        parser.error("token TTL must be positive")
+    uvicorn.run(
+        create_app(Service(args.token_ttl_seconds)),
+        host=args.host,
+        port=args.port,
+        workers=1,
+        access_log=False,
+    )
