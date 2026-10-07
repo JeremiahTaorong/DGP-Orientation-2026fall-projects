@@ -1,7 +1,7 @@
 import httpx
 import pytest
 
-from text_service.client import command_request, exchange, read_text
+from text_service.client import command_request, exchange, main, read_text
 
 
 def test_request() -> None:
@@ -85,3 +85,59 @@ def test_account_commands(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_unknown_command() -> None:
     with pytest.raises(ValueError, match="Unknown command"):
         command_request("missing")
+
+
+def test_interactive_token_lifecycle(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    requests: list[tuple[str, str, str | None]] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append((request.method, request.url.path, request.headers.get("Authorization")))
+        if request.url.path == "/sessions":
+            return httpx.Response(200, json={"data": {"token": "new-token", "expires_in": 300}})
+        if request.url.path == "/texts":
+            return httpx.Response(401, json={"message": "expired"})
+        return httpx.Response(200, json={"data": None})
+
+    client = httpx.Client(base_url="http://localhost", transport=httpx.MockTransport(respond))
+    entered = iter(["login", "alice", "list", "logout", "q"])
+    monkeypatch.setattr("builtins.input", lambda _prompt="": next(entered))
+    monkeypatch.setattr("getpass.getpass", lambda _prompt="": "password1")
+    monkeypatch.setattr("text_service.client.httpx.Client", lambda **_kwargs: client)
+    monkeypatch.setattr("sys.argv", ["rm-client"])
+
+    main()
+
+    assert requests == [
+        ("POST", "/sessions", None),
+        ("GET", "/texts", "Bearer new-token"),
+        ("DELETE", "/sessions/current", None),
+    ]
+    assert "Please log in again." in capsys.readouterr().out
+
+
+def test_interactive_network_failure_recovers(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    attempts = 0
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise httpx.ConnectError("connection refused", request=request)
+        return httpx.Response(200, json={"data": "pong"})
+
+    client = httpx.Client(base_url="http://localhost", transport=httpx.MockTransport(respond))
+    entered = iter(["ping", "ping", "q"])
+    monkeypatch.setattr("builtins.input", lambda _prompt="": next(entered))
+    monkeypatch.setattr("text_service.client.httpx.Client", lambda **_kwargs: client)
+    monkeypatch.setattr("sys.argv", ["rm-client"])
+
+    main()
+
+    output = capsys.readouterr().out
+    assert attempts == 2
+    assert "Request failed: connection refused" in output
+    assert "200 {'data': 'pong'}" in output

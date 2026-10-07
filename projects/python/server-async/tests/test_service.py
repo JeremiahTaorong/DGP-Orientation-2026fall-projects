@@ -176,6 +176,76 @@ def test_concurrent_registration() -> None:
     assert sorted(statuses) == [201, 409, 409, 409]
 
 
+def test_concurrent_logins_leave_one_valid_token() -> None:
+    service = Service()
+    assert service.handle("POST", "/users", ACCOUNT, "")[0] == 201
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(
+            pool.map(lambda _: service.handle("POST", "/sessions", ACCOUNT, ""), range(2))
+        )
+    assert [status for status, _ in results] == [200, 200]
+    tokens = [result["data"]["token"] for _, result in results]
+    assert tokens[0] != tokens[1]
+    assert (
+        sum(service.handle("GET", "/texts", None, f"Bearer {token}")[0] == 200 for token in tokens)
+        == 1
+    )
+
+
+def test_logout_while_login_is_hashing(monkeypatch: pytest.MonkeyPatch) -> None:
+    service = Service()
+    old_token = register_and_login(service)
+    salt = service.users["alice"].salt
+    hashing_started = threading.Event()
+    resume_hashing = threading.Event()
+    original_hash = hashlib.pbkdf2_hmac
+
+    def controlled_hash(
+        hash_name: str, password: bytes, user_salt: bytes, iterations: int
+    ) -> bytes:
+        if user_salt == salt and not hashing_started.is_set():
+            hashing_started.set()
+            assert resume_hashing.wait(timeout=5)
+        return original_hash(hash_name, password, user_salt, iterations)
+
+    monkeypatch.setattr(hashlib, "pbkdf2_hmac", controlled_hash)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        login = pool.submit(service.handle, "POST", "/sessions", ACCOUNT, "")
+        assert hashing_started.wait(timeout=5)
+        assert service.handle("DELETE", "/sessions/current", None, f"Bearer {old_token}")[0] == 200
+        resume_hashing.set()
+        status, result = login.result(timeout=5)
+    assert status == 200
+    assert service.handle("GET", "/texts", None, f"Bearer {old_token}")[0] == 401
+    assert service.handle("GET", "/texts", None, f"Bearer {result['data']['token']}")[0] == 200
+
+
+def test_pending_write_cannot_reach_recreated_account(monkeypatch: pytest.MonkeyPatch) -> None:
+    service = Service()
+    old_token = register_and_login(service)
+    parsing_started = threading.Event()
+    resume_parsing = threading.Event()
+    original_parse = service._text_from_body
+
+    def controlled_parse(body: object) -> tuple[int, dict[str, object]] | str:
+        if body == {"text": "stale"}:
+            parsing_started.set()
+            assert resume_parsing.wait(timeout=5)
+        return original_parse(body)
+
+    monkeypatch.setattr(service, "_text_from_body", controlled_parse)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        pending = pool.submit(
+            service.handle, "PUT", "/texts/note", {"text": "stale"}, f"Bearer {old_token}"
+        )
+        assert parsing_started.wait(timeout=5)
+        assert service.handle("DELETE", "/users/me", None, f"Bearer {old_token}")[0] == 200
+        new_token = register_and_login(service)
+        resume_parsing.set()
+        assert pending.result(timeout=5)[0] == 401
+    assert service.handle("GET", "/texts", None, f"Bearer {new_token}") == (200, {"data": []})
+
+
 def test_old_login_cannot_attach_to_reregistered_user(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -225,7 +295,7 @@ def test_concurrent_text_work_cannot_survive_account_deletion() -> None:
         futures = [pool.submit(mutate, index) for index in range(40)]
         deletion = pool.submit(service.handle, "DELETE", "/users/me", None, authorization)
         statuses = [future.result() for future in futures]
-        assert deletion.result()[0] in (200, 401)
+        assert deletion.result()[0] == 200
 
     assert set(statuses) <= {200, 404, 401}
     assert service.handle("GET", "/texts", None, authorization)[0] == 401
