@@ -92,3 +92,7 @@ def main() -> None:
                     print(f"Request failed: {exc}")
         except (EOFError, KeyboardInterrupt):
             print()
+
+
+if __name__ == "__main__":
+    main()

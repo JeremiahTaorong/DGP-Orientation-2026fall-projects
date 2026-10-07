@@ -100,3 +100,7 @@ def main() -> None:
         workers=1,
         access_log=False,
     )
+
+
+if __name__ == "__main__":
+    main()

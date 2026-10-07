@@ -84,6 +84,20 @@ cd projects/python/client-sync
 uv run rm-client --url http://127.0.0.1:7878
 ```
 
+Windows 上如果系统策略阻止 uv 或虚拟环境中的命令入口，可使用已创建环境的 Python 模块入口。先在服务端目录打开一个终端：
+
+```cmd
+.venv\Scripts\python.exe -m text_service.server --host 127.0.0.1 --port 7878 --token-ttl-seconds 300
+```
+
+再在客户端目录打开另一个终端：
+
+```cmd
+.venv\Scripts\python.exe -m text_service.client --url http://127.0.0.1:7878
+```
+
+两种入口执行同一 `main()`。服务端终端保持运行，客户端输入 `ping` 应看到 `200` 和 `pong`。
+
 可用命令为 `ping`、`register`、`login`、`logout`、`list`、`echo`、`delete-user`、`put`、`get`、`delete` 和 `q`。
 
 ## 验证
@@ -97,9 +111,17 @@ uv run ruff format --check .
 uv run pyright
 ```
 
+若 Windows 阻止这些命令的启动器，可在每个项目目录依次执行：
+
+```cmd
+.venv\Scripts\python.exe -m pytest
+.venv\Scripts\ruff.exe check .
+.venv\Scripts\ruff.exe format --check .
+.venv\Scripts\python.exe -m pyright --pythonpath .venv\Scripts\python.exe
+```
+
 测试分为三层：客户端请求与输入测试、直接调用 `Service` 的业务和并发测试、通过 ASGI/FastAPI 的 HTTP 测试。覆盖重复注册、登录替换、退出、注销与同名重注册、TTL、用户文本隔离、动态路由、错误状态、UTF-8 大小限制和主要竞争场景。
 
-已使用官方 Windows `reference-v0.2.1` 交叉验证。其 `projects-commit.txt` 为 `288db1c9cf92fabf9bce299a70b580394ec302b7`，与实现所依据的仓库提交一致：官方客户端可以操作本异步服务端，本客户端也可以完成官方服务端的 Unicode echo、文本增删改查和账号生命周期流程。
+已使用官方 Windows `reference-v0.2.1` 交叉验证。其 `projects-commit.txt` 为 `288db1c9cf92fabf9bce299a70b580394ec302b7`；官方客户端可以操作本异步服务端，本客户端也可以完成官方服务端的 Unicode echo、文本增删改查和账号生命周期流程。逐项核查结果见 [交付核对](VERIFICATION.md)。
 
 同步服务端测试会显示来自固定版本 Starlette 测试客户端的弃用警告；它不影响测试结果，项目代码的 Ruff 和 Pyright 检查均无警告。
-
